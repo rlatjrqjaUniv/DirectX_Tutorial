@@ -1,0 +1,2 @@
+﻿  FileName.cpp
+C:\MyFiles\DirectX\EX3\EX3\FileName.cpp(5,10): error C1083: 포함 파일을 열 수 없습니다. 'd3dx11.h': No such file or directory
