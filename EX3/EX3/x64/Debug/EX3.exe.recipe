@@ -2,7 +2,7 @@
 <Project>
   <ProjectOutputs>
     <ProjectOutput>
-      <FullPath>C:\MyFiles\DirectX\EX3\x64\Debug\EX3.exe</FullPath>
+      <FullPath>C:\TestLab\DirectX_Tutorial\EX3\x64\Debug\EX3.exe</FullPath>
     </ProjectOutput>
   </ProjectOutputs>
   <ContentFiles />

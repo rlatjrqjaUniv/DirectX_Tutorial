@@ -4,24 +4,43 @@
 #include <d3dx11.h>
 #include <d3dx10.h>
 
+#define SCREEN_WIDTH 800
+#define	SCREEN_HEIGHT 600
+
 //Direct3D 라이브러리 파일 포함
 #pragma comment (lib,"d3d11.lib")
 #pragma comment (lib,"d3dx11.lib")
 #pragma comment (lib,"d3dx10.lib")
 
+struct VERTEX
+{
+	float X, Y, Z;
+	D3DXCOLOR COLOR;
+};
+
 //전역 선언
 IDXGISwapChain* swapchain;//스왑체인 인터페이스
 ID3D11Device* dev;//Direct3D 장치 인터페이스
 ID3D11DeviceContext* devcon;//Direct3D 컨텍스트
+ID3D11RenderTargetView* backbuffer;
+ID3D11VertexShader* pVS;
+ID3D11PixelShader* pPS;
+ID3D11Buffer* pVBuffer;
+ID3D11InputLayout* pLayout;
 
-void Init3D(HWND hWnd);//Direct3D 초기화
+void InitD3D(HWND hWnd);//Direct3D 초기화
 void CleanD3D(void);//Direct3D 종료 및 메모리 해제
+void InitPipeLine();
+void InitGrapics();
 
 //WindowProc 함수 프로토타입
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
+//렌더링 파이프 라인 함수
+void InitPipeLine();
+
 //Direct3D 초기화 및 준비
-void Init3D(HWND hWnd)
+void InitD3D(HWND hWnd)
 {
 	//스왑체인 정보를 담은 구조체
 	DXGI_SWAP_CHAIN_DESC scd;
@@ -31,10 +50,13 @@ void Init3D(HWND hWnd)
 
 	scd.BufferCount = 1;//백버퍼 1개(+프론트 버퍼)
 	scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;//32비트 색상
+	scd.BufferDesc.Width = SCREEN_WIDTH;
+	scd.BufferDesc.Height = SCREEN_HEIGHT;
 	scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;//스왑체인 사용 방법
 	scd.OutputWindow = hWnd;//사용할 창 핸들
 	scd.SampleDesc.Count = 4;//다중 샘플 수
 	scd.Windowed = true;// 창모드-전체화면
+	scd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;//전체화면 전환 허용
 
 	//스왑체인 구조체의 정보를 사용해 디바이스,컨텍스트,스왑체인 생성
 	D3D11CreateDeviceAndSwapChain(NULL,
@@ -42,14 +64,69 @@ void Init3D(HWND hWnd)
 		NULL, NULL, NULL, NULL,
 		D3D11_SDK_VERSION,
 		&scd, &swapchain, &dev, NULL, &devcon);
+
+	//백 버퍼의 주소를 가져옴
+	ID3D11Texture2D* pBackBuffer;
+	swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBuffer);
+
+	//백 버퍼의 주소를 사용해 렌더 타겟을 만듬
+	dev->CreateRenderTargetView(pBackBuffer, NULL, &backbuffer);
+	pBackBuffer->Release();
+
+	//렌더 타겟을 백 버퍼로 설정
+	devcon->OMSetRenderTargets(1, &backbuffer, NULL);
+
+	//뷰포트 설정
+	D3D11_VIEWPORT viewport;
+	ZeroMemory(&viewport, sizeof(D3D11_VIEWPORT));
+
+	viewport.TopLeftX = 0;
+	viewport.TopLeftY = 0;
+	viewport.Width = SCREEN_WIDTH;
+	viewport.Height = SCREEN_HEIGHT;
+
+	devcon->RSSetViewports(1, &viewport);
+
+	InitPipeLine();
+	InitGrapics();
 }
 
 //Direct3D와 COM 종료
 void CleanD3D()
 {
+	//창모드로 전환
+	swapchain->SetFullscreenState(FALSE, NULL);
+
 	//기존 COM 모두 종료
+	pLayout->Release();
+	pVS->Release();
+	//pPS->Release();
+	pVBuffer->Release();
 	swapchain->Release();
+	backbuffer->Release();
+	dev->Release();
 	devcon->Release();
+}
+
+//단일 프레임을 렌더링 하는 함수
+void RenderFrame()
+{
+	//백 버퍼를 진한 파란색으로
+	devcon->ClearRenderTargetView(backbuffer, D3DXCOLOR(0.0f, 0.2f, 0.4f, 1.0f));
+
+		//표시할 정점 버퍼 선택
+		UINT stride = sizeof(VERTEX);
+		UINT offset = 0;
+		devcon->IASetVertexBuffers(0, 1, &pVBuffer, &stride, &offset);
+
+		//사용중인 기본 유형 선택
+		devcon->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+		//정점 버퍼를 백버퍼에 그림
+		devcon->Draw(3, 0);
+
+	//프론트와 백버퍼 전환
+	swapchain->Present(0, 0);
 }
 
 //Windows 프로그램 진입점
@@ -70,7 +147,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	wc.lpfnWndProc = WindowProc;
 	wc.hInstance = hInstance;
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hbrBackground = (HBRUSH)COLOR_WINDOW;
+	//wc.hbrBackground = (HBRUSH)COLOR_WINDOW;
 	wc.lpszClassName = L"WindowClass1";
 
 	//윈도우 클래스 등록
@@ -88,7 +165,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		L"Our First Windowed Program",//창 이름
 		WS_OVERLAPPEDWINDOW,//윈도우 스타일
 		300, 300, //xy위치
-		wr.right - wr.left, wr.bottom - wr.top, //너비,높이
+		SCREEN_WIDTH, SCREEN_HEIGHT, //너비,높이
 		NULL, //부모 없음
 		NULL, //메뉴 없음
 		hInstance, //애플리케이션 핸들
@@ -96,6 +173,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	//창을 화면에 띄움
 	ShowWindow(hWnd, nCmdShow);
+
+	//화면 초기화
+	InitD3D(hWnd);
 
 	//메인루프 진입
 
@@ -121,7 +201,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		{
 			//게임코드
 		}
+		RenderFrame();
 	}
+	//메모리 해제
+	CleanD3D();
 
 	//WM_QUIT 메세지의 이 부분을 windows에 반환
 	return msg.wParam;
@@ -145,4 +228,64 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 
 	//
 	return DefWindowProc(hWnd, message, wParam, lParam);
+}
+
+//렌더링 파이프라인 함수
+void InitPipeLine()
+{
+	/*HRESULT D3DX11CompileFromFile(LPCTSTR pSrcFile, D3D10_SHADER_MACRO * pDefines, LPD3D10INCLUDE pInclude, LPCSTR pFunctionName, LPCSTR pProfile, UINT Flag1, UINT Flag2, ID3DX11ThreadPump * Pump,ID3D10Blob * *ppShader, ID3D10Blob * *ppErrorMags, HRESULT * pHResult)*/
+
+	//Vertext Shder, Pixel Shader
+	ID3D10Blob* VS, * PS;
+	D3DX11CompileFromFile(L"Shader.shader", 0, 0, "VShader", "vs_4_0", 0, 0, 0, &VS, 0, 0);
+	D3DX11CompileFromFile(L"Shader.shader", 0, 0, "PShader", "ps_4_0", 0, 0, 0, &PS, 0, 0);
+
+	//쉐이더를 객체로 캡슐화
+	dev->CreateVertexShader(VS->GetBufferPointer(), VS->GetBufferSize(), NULL, &pVS);
+	dev->CreatePixelShader(PS->GetBufferPointer(), PS->GetBufferSize(), NULL, &pPS);
+
+	devcon->VSSetShader(pVS, 0, 0);
+	devcon->PSSetShader(pPS, 0, 0);
+
+	D3D11_INPUT_ELEMENT_DESC ied[] =
+	{
+		{"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},
+		{"COLOR",0,DXGI_FORMAT_R32G32B32_FLOAT,0,12,D3D11_INPUT_PER_VERTEX_DATA,0}
+	};
+
+	/*HRESULT CreatInputLayout(D3D11_INPUT_ELEMENT_DESC * pInputElementDescs,
+		UINT NumElements, void* pShaderBytecodeWithInputSignature,
+		SIZE_T BytecodeLength, ID3D11InputLayout * *pInputLayOut);*/
+	dev->CreateInputLayout(ied, 2, VS->GetBufferPointer(), VS->GetBufferSize(), &pLayout);
+	devcon->IASetInputLayout(pLayout);
+}
+
+void InitGrapics()
+{
+	//구조체 이용해 삼각형 생성
+	VERTEX OurVertices[] =
+	{
+		{0.0f,0.5f,0.0f,D3DXCOLOR(1.0f,0.0f,0.0f,1.0f)},
+		{0.45f,-0.5f,0.0f,D3DXCOLOR(0.0f,1.0f,0.0f,1.0f)},
+		{-0.45f,-0.5f,0.0f,D3DXCOLOR(0.0f,0.0f,1.0f,1.0f)}
+	};
+
+	//정점 버퍼 생성
+	D3D11_BUFFER_DESC bd;
+	ZeroMemory(&bd, sizeof(bd));
+
+	bd.Usage = D3D11_USAGE_DYNAMIC;//CPU쓰기, GPU 읽기 액세스
+	bd.ByteWidth = sizeof(VERTEX) * 3;//정점의 3배 크기로 설정
+	bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;//버퍼의 유형이 정점 버퍼임
+	bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;//CPU가 버퍼에 쓰기 가능
+
+	dev->CreateBuffer(&bd, NULL, &pVBuffer);//버퍼 생성
+
+	//GPU쪽에서 정점을 버퍼에 복사하기
+	D3D11_MAPPED_SUBRESOURCE ms;
+	
+	devcon->Map(pVBuffer, NULL, D3D11_MAP_WRITE_DISCARD, NULL, &ms);//버퍼 매핑
+	memcpy(ms.pData, OurVertices, sizeof(OurVertices));//정점 데이터 복사
+	devcon->Unmap(pVBuffer, NULL);
+
 }
